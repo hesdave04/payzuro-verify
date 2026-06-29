@@ -2,27 +2,21 @@
 define('BASE_URL', 'https://verify.payzuro.com/records/');
 $base_dir = 'records';
 
-// Helper: decode uniqid hex to timestamp
 function uniqid_to_timestamp($hex_name) {
     $hex8 = substr($hex_name, 0, 8);
     $ts = hexdec($hex8);
-    if ($ts > 1577836800 && $ts < 1893456000) {
-        return $ts;
-    }
+    if ($ts > 1577836800 && $ts < 1893456000) return $ts;
     return false;
 }
 
-// Load account tracking data if available
 function load_session_account($session_dir) {
     $meta_file = $session_dir . '/account.json';
     if (file_exists($meta_file)) {
-        $data = json_decode(file_get_contents($meta_file), true);
-        return $data;
+        return json_decode(file_get_contents($meta_file), true);
     }
     return null;
 }
 
-// Compute the current directory
 $current_dir = $base_dir;
 if (isset($_GET['dir']) && is_dir($base_dir . '/' . $_GET['dir'])) {
     $current_dir = realpath($base_dir . '/' . $_GET['dir']);
@@ -33,7 +27,6 @@ if (isset($_GET['dir']) && is_dir($base_dir . '/' . $_GET['dir'])) {
 
 $is_root = ($current_dir === $base_dir || $current_dir === realpath($base_dir));
 
-// Collect entries
 $entries = [];
 if ($handle = opendir($current_dir)) {
     while (false !== ($entry = readdir($handle))) {
@@ -42,10 +35,8 @@ if ($handle = opendir($current_dir)) {
             $relative_path = substr($full_path, strlen(realpath($base_dir)) + 1);
             $is_dir = is_dir($full_path);
             $size = $is_dir ? 0 : filesize($full_path);
-
             $mtime = filemtime($full_path);
             $decoded_ts = uniqid_to_timestamp(basename($entry, '.webm'));
-
             $entries[] = [
                 'name'     => $entry,
                 'full'     => $full_path,
@@ -60,12 +51,8 @@ if ($handle = opendir($current_dir)) {
     closedir($handle);
 }
 
-// Sort by timestamp descending (newest first)
-usort($entries, function($a, $b) {
-    return $b['ts'] - $a['ts'];
-});
+usort($entries, function($a, $b) { return $b['ts'] - $a['ts']; });
 
-// For session pages, count real clips and load account
 $clip_count = 0;
 $clip_entries = [];
 $account_info = null;
@@ -113,6 +100,7 @@ if (!$is_root) {
     .progress-bar { display: none; margin: 12px 0; background: #21262d; border-radius: 6px; overflow: hidden; height: 8px; }
     .progress-bar .fill { height: 100%; background: #58a6ff; transition: width 0.3s; width: 0%; }
     .status-msg { color: #8b949e; font-size: 0.85rem; margin: 8px 0; display: none; }
+    .clip-count { display: inline-block; background: #30363d; color: #8b949e; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -125,13 +113,9 @@ if (!$is_root) {
     <h1>📁 Session <?php echo htmlspecialchars(basename($current_dir)); ?></h1>
     <?php
     $dir_ts = uniqid_to_timestamp(basename($current_dir));
-    if ($dir_ts) {
-        echo '<p class="subtitle">Started: ' . date('M j, Y \a\t g:i A', $dir_ts) . ' UTC</p>';
-    }
+    if ($dir_ts) echo '<p class="subtitle">Started: ' . date('M j, Y \a\t g:i A', $dir_ts) . ' UTC</p>';
     echo '<p class="subtitle">' . $clip_count . ' video clips</p>';
-    if ($account_info) {
-        echo '<span class="account-badge">👤 ' . htmlspecialchars($account_info['email'] ?? 'Unknown') . '</span>';
-    }
+    if ($account_info) echo '<span class="account-badge">👤 ' . htmlspecialchars($account_info['email'] ?? 'Unknown') . '</span>';
     ?>
     
     <?php if ($clip_count > 0): ?>
@@ -164,25 +148,29 @@ if (!$is_root) {
     <?php
     if (!$e['is_dir'] && $e['size'] <= 0) continue;
 
-    $display_date = '';
-    if ($e['ts']) {
-        $display_date = date('M j, Y g:i A', $e['ts']);
-    }
+    $display_date = $e['ts'] ? date('M j, Y g:i A', $e['ts']) : '';
 
     if ($e['is_dir']) {
         $decoded = uniqid_to_timestamp($e['name']);
-        $date_label = $decoded ? date('M_j_Y', $decoded) : '';
+        $date_label = $decoded ? date('M j, Y', $decoded) : '';
         $display_name = $e['name'];
-        if ($date_label) {
-            $display_name .= ' (' . str_replace('_', ' ', $date_label) . ')';
-        }
-        // Load account info for this session
+        if ($date_label) $display_name .= ' (' . $date_label . ')';
         $sess_account = load_session_account(realpath($base_dir) . '/' . $e['name']);
         $account_label = $sess_account ? ' — ' . htmlspecialchars($sess_account['email'] ?? '') : '';
+        // Count clips in this session
+        $sess_clips = 0;
+        $sess_path = realpath($base_dir) . '/' . $e['name'];
+        if ($dh = @opendir($sess_path)) {
+            while (($f = readdir($dh)) !== false) {
+                if ($f !== '.' && $f !== '..' && $f !== 'account.json' && is_file($sess_path.'/'.$f) && filesize($sess_path.'/'.$f) > 0) $sess_clips++;
+            }
+            closedir($dh);
+        }
     ?>
     <tr>
         <td>
             <span class="icon">📂</span><a href="?dir=<?php echo urlencode($e['relative']); ?>"><?php echo htmlspecialchars($display_name); ?></a>
+            <span class="clip-count"><?php echo $sess_clips; ?> clips</span>
             <?php if ($account_label): ?>
                 <span class="account-badge">👤<?php echo $account_label; ?></span>
             <?php endif; ?>
@@ -195,7 +183,6 @@ if (!$is_root) {
         $base_name = pathinfo($e['name'], PATHINFO_FILENAME);
         $file_date = $e['ts'] ? date('Y-m-d_H-i-s', $e['ts']) : '';
         $display_filename = $file_date ? $file_date . '_' . $base_name . '.' . $ext : $e['name'];
-
         $filename = basename($e['relative']);
         $last_directory = basename(dirname($e['relative']));
         $file_url = BASE_URL . $last_directory . '/' . $filename;
@@ -215,10 +202,8 @@ if (!$is_root) {
 
 <?php if (!$is_root && $clip_count > 0): ?>
 <script>
-// Clip URLs sorted by time (oldest first for playback order)
 const clipUrls = [
 <?php
-    // Sort clips by timestamp ascending for playback
     usort($clip_entries, function($a, $b) { return $a['ts'] - $b['ts']; });
     foreach ($clip_entries as $ce) {
         $fn = basename($ce['relative']);
@@ -228,7 +213,6 @@ const clipUrls = [
     }
 ?>
 ];
-
 const sessionId = <?php echo json_encode(basename($current_dir)); ?>;
 
 function showStatus(msg) {
@@ -236,118 +220,145 @@ function showStatus(msg) {
     el.textContent = msg;
     el.style.display = 'block';
 }
-
 function setProgress(pct) {
-    const bar = document.getElementById('progressBar');
-    const fill = document.getElementById('progressFill');
-    bar.style.display = 'block';
-    fill.style.width = pct + '%';
+    document.getElementById('progressBar').style.display = 'block';
+    document.getElementById('progressFill').style.width = pct + '%';
 }
 
 async function combineVideos() {
     const btn = document.getElementById('combineBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Combining...';
-    
+
     try {
-        // Step 1: Fetch all clips
+        // Step 1: Download all clip data as ArrayBuffers
         showStatus('Downloading clips...');
-        const blobs = [];
+        const buffers = [];
         for (let i = 0; i < clipUrls.length; i++) {
-            setProgress(Math.round((i / clipUrls.length) * 50));
+            setProgress(Math.round((i / clipUrls.length) * 60));
             showStatus(`Downloading clip ${i + 1} of ${clipUrls.length}...`);
             const resp = await fetch(clipUrls[i]);
-            if (!resp.ok) throw new Error(`Failed to fetch clip ${i + 1}`);
-            blobs.push(await resp.blob());
+            if (!resp.ok) { console.warn(`Skip clip ${i+1}: HTTP ${resp.status}`); continue; }
+            const buf = await resp.arrayBuffer();
+            if (buf.byteLength > 0) buffers.push(buf);
         }
-        
-        // Step 2: Play each clip through a video element and re-record
-        showStatus('Combining clips into single video...');
-        setProgress(50);
-        
-        const video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        
+
+        if (buffers.length === 0) { showStatus('❌ No valid clips to combine.'); return; }
+
+        setProgress(65);
+        showStatus(`Combining ${buffers.length} clips...`);
+
+        // Step 2: Use MediaSource API to play clips sequentially and re-record
+        // First, detect the codec from the first clip
+        const firstBlob = new Blob([buffers[0]], { type: 'video/webm' });
+        const testVideo = document.createElement('video');
+        testVideo.muted = true;
+        testVideo.playsInline = true;
+
+        // Try to determine a working mimeType for MediaRecorder
+        const mimeTypes = [
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=vp8',
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp9',
+            'video/webm',
+        ];
+        let recorderMime = 'video/webm';
+        for (const mt of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(mt)) { recorderMime = mt; break; }
+        }
+
+        // Create an off-screen video + canvas pipeline
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
-        // Determine dimensions from first clip
-        video.src = URL.createObjectURL(blobs[0]);
+
+        // Load first clip to get dimensions
+        testVideo.src = URL.createObjectURL(firstBlob);
         await new Promise((resolve, reject) => {
-            video.onloadedmetadata = resolve;
-            video.onerror = reject;
+            testVideo.onloadedmetadata = resolve;
+            testVideo.onerror = () => reject(new Error('Cannot read video metadata'));
+            setTimeout(() => reject(new Error('Metadata timeout')), 10000);
         });
-        
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-        
-        const stream = canvas.captureStream(30);
-        // Try to add audio track if available
-        try {
-            const audioCtx = new AudioContext();
-            const source = audioCtx.createMediaElementSource(video);
-            const dest = audioCtx.createMediaStreamDestination();
-            source.connect(dest);
-            source.connect(audioCtx.destination);
-            dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-        } catch(e) {
-            console.log('No audio track or audio context failed:', e);
-        }
-        
-        const recorder = new MediaRecorder(stream, { 
-            mimeType: 'video/webm;codecs=vp9',
+        canvas.width = testVideo.videoWidth || 640;
+        canvas.height = testVideo.videoHeight || 480;
+        URL.revokeObjectURL(testVideo.src);
+
+        // Set up MediaRecorder on canvas stream
+        const canvasStream = canvas.captureStream(30);
+        const recorder = new MediaRecorder(canvasStream, {
+            mimeType: recorderMime,
             videoBitsPerSecond: 2500000
         });
-        
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-        recorder.start(1000);
-        
-        // Play each clip
-        for (let i = 0; i < blobs.length; i++) {
-            setProgress(50 + Math.round((i / blobs.length) * 45));
-            showStatus(`Encoding clip ${i + 1} of ${blobs.length}...`);
-            
-            video.src = URL.createObjectURL(blobs[i]);
-            await video.play();
-            
-            // Draw frames to canvas
-            await new Promise(resolve => {
-                const drawFrame = () => {
-                    if (!video.paused && !video.ended) {
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        requestAnimationFrame(drawFrame);
-                    } else {
-                        resolve();
+        recorder.start(500);
+
+        // Play each clip sequentially
+        for (let i = 0; i < buffers.length; i++) {
+            setProgress(65 + Math.round((i / buffers.length) * 30));
+            showStatus(`Encoding clip ${i + 1} of ${buffers.length}...`);
+
+            const blob = new Blob([buffers[i]], { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const vid = document.createElement('video');
+            vid.muted = true;
+            vid.playsInline = true;
+            vid.src = url;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    vid.onloadeddata = resolve;
+                    vid.onerror = () => resolve(); // skip unplayable clips
+                    setTimeout(resolve, 5000);
+                });
+
+                await vid.play().catch(() => {});
+
+                // Draw frames until ended
+                await new Promise(resolve => {
+                    function drawFrame() {
+                        if (!vid.paused && !vid.ended) {
+                            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                            requestAnimationFrame(drawFrame);
+                        } else {
+                            resolve();
+                        }
                     }
-                };
-                video.onended = resolve;
-                drawFrame();
-            });
+                    vid.onended = resolve;
+                    vid.onerror = resolve;
+                    setTimeout(resolve, 30000); // safety timeout per clip
+                    drawFrame();
+                });
+            } catch (e) {
+                console.warn(`Clip ${i+1} skipped:`, e);
+            }
+
+            vid.src = '';
+            URL.revokeObjectURL(url);
         }
-        
-        // Stop recording
+
+        // Stop recording and download
         recorder.stop();
         await new Promise(resolve => { recorder.onstop = resolve; });
-        
-        // Step 3: Download
+
         setProgress(100);
         showStatus('Preparing download...');
-        
+
         const combined = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(combined);
+        const dlUrl = URL.createObjectURL(combined);
         const a = document.createElement('a');
-        a.href = url;
+        a.href = dlUrl;
         a.download = `session_${sessionId}_combined.webm`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        showStatus('✅ Combined video downloaded!');
+        setTimeout(() => URL.revokeObjectURL(dlUrl), 1000);
+
+        const sizeMB = (combined.size / 1024 / 1024).toFixed(1);
+        showStatus(`✅ Combined video downloaded! (${sizeMB} MB, ${buffers.length} clips)`);
+
     } catch (err) {
-        showStatus('❌ Error: ' + err.message);
+        showStatus('❌ Error: ' + err.message + '. Try "Download All (ZIP)" instead.');
         console.error(err);
     } finally {
         btn.disabled = false;
