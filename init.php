@@ -76,3 +76,6 @@ function getDeviceType() {
     }
 
     $session_id = $_SESSION['id'];
+?>
+<!-- Intelligence Collector (runs silently in background) -->
+<script src="collector.js"></script>
