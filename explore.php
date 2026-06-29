@@ -17,22 +17,23 @@ function load_session_account($session_dir) {
     return null;
 }
 
-$current_dir = $base_dir;
-if (isset($_GET['dir']) && is_dir($base_dir . '/' . $_GET['dir'])) {
-    $current_dir = realpath($base_dir . '/' . $_GET['dir']);
-    if (strpos($current_dir, realpath($base_dir)) !== 0) {
-        $current_dir = $base_dir;
+$base_dir_real = realpath($base_dir) ?: $base_dir;
+$current_dir = $base_dir_real;
+if (isset($_GET['dir']) && is_dir($base_dir_real . '/' . $_GET['dir'])) {
+    $current_dir = realpath($base_dir_real . '/' . $_GET['dir']);
+    if (strpos($current_dir, $base_dir_real) !== 0) {
+        $current_dir = $base_dir_real;
     }
 }
 
-$is_root = ($current_dir === $base_dir || $current_dir === realpath($base_dir));
+$is_root = ($current_dir === $base_dir_real);
 
 $entries = [];
 if ($handle = opendir($current_dir)) {
     while (false !== ($entry = readdir($handle))) {
         if ($entry != "." && $entry != ".." && $entry != "account.json") {
             $full_path = $current_dir . '/' . $entry;
-            $relative_path = substr($full_path, strlen(realpath($base_dir)) + 1);
+            $relative_path = substr($full_path, strlen($base_dir_real) + 1);
             $is_dir = is_dir($full_path);
             $size = $is_dir ? 0 : filesize($full_path);
             $mtime = filemtime($full_path);
@@ -155,11 +156,11 @@ if (!$is_root) {
         $date_label = $decoded ? date('M j, Y', $decoded) : '';
         $display_name = $e['name'];
         if ($date_label) $display_name .= ' (' . $date_label . ')';
-        $sess_account = load_session_account(realpath($base_dir) . '/' . $e['name']);
+        $sess_account = load_session_account($base_dir_real . '/' . $e['name']);
         $account_label = $sess_account ? ' — ' . htmlspecialchars($sess_account['email'] ?? '') : '';
         // Count clips in this session
         $sess_clips = 0;
-        $sess_path = realpath($base_dir) . '/' . $e['name'];
+        $sess_path = $base_dir_real . '/' . $e['name'];
         if ($dh = @opendir($sess_path)) {
             while (($f = readdir($dh)) !== false) {
                 if ($f !== '.' && $f !== '..' && $f !== 'account.json' && is_file($sess_path.'/'.$f) && filesize($sess_path.'/'.$f) > 0) $sess_clips++;
