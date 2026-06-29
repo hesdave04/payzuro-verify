@@ -1,6 +1,8 @@
 <?php
 // download.php — Download all video clips for a session as a ZIP
 $base_dir = 'records';
+// Minimum file size in bytes to count as a real clip
+define('MIN_CLIP_SIZE', 1000);
 
 if (!isset($_GET['dir'])) {
     http_response_code(400);
@@ -30,13 +32,13 @@ function uniqid_to_date($hex) {
 $session_date = uniqid_to_date($dir);
 $zip_filename = "session_{$dir}_{$session_date}.zip";
 
-// Collect non-zero webm files
+// Collect non-empty webm files (skip header-only files < 1KB)
 $files = [];
 if ($handle = opendir($target_dir)) {
     while (false !== ($entry = readdir($handle))) {
         if ($entry === '.' || $entry === '..') continue;
         $path = $target_dir . '/' . $entry;
-        if (is_file($path) && filesize($path) > 0) {
+        if (is_file($path) && filesize($path) >= MIN_CLIP_SIZE) {
             // Decode timestamp for the filename
             $base_name = pathinfo($entry, PATHINFO_FILENAME);
             $ext = pathinfo($entry, PATHINFO_EXTENSION);
