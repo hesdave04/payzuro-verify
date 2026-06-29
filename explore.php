@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set("America/Los_Angeles");
 define('BASE_URL', 'https://verify.payzuro.com/records/');
 $base_dir = 'records';
 // Minimum file size in bytes to count as a real clip (filters out empty/header-only recordings)
@@ -117,7 +118,7 @@ if (!$is_root) {
     <h1>📁 Session <?php echo htmlspecialchars(basename($current_dir)); ?></h1>
     <?php
     $dir_ts = uniqid_to_timestamp(basename($current_dir));
-    if ($dir_ts) echo '<p class="subtitle">Started: ' . date('M j, Y \a\t g:i A', $dir_ts) . ' UTC</p>';
+    if ($dir_ts) echo '<p class="subtitle">Started: ' . date('M j, Y \a\t g:i A', $dir_ts) . ' PT</p>';
     echo '<p class="subtitle">' . $clip_count . ' video clips</p>';
     if ($account_info) echo '<span class="account-badge">👤 ' . htmlspecialchars($account_info['email'] ?? 'Unknown') . '</span>';
     ?>
