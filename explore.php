@@ -1,6 +1,8 @@
 <?php
 define('BASE_URL', 'https://verify.payzuro.com/records/');
 $base_dir = 'records';
+// Minimum file size in bytes to count as a real clip (filters out empty/header-only recordings)
+define('MIN_CLIP_SIZE', 1000);
 
 function uniqid_to_timestamp($hex_name) {
     $hex8 = substr($hex_name, 0, 8);
@@ -17,23 +19,22 @@ function load_session_account($session_dir) {
     return null;
 }
 
-$base_dir_real = realpath($base_dir) ?: $base_dir;
-$current_dir = $base_dir_real;
-if (isset($_GET['dir']) && is_dir($base_dir_real . '/' . $_GET['dir'])) {
-    $current_dir = realpath($base_dir_real . '/' . $_GET['dir']);
-    if (strpos($current_dir, $base_dir_real) !== 0) {
-        $current_dir = $base_dir_real;
+$current_dir = $base_dir;
+if (isset($_GET['dir']) && is_dir($base_dir . '/' . $_GET['dir'])) {
+    $current_dir = realpath($base_dir . '/' . $_GET['dir']);
+    if (strpos($current_dir, realpath($base_dir)) !== 0) {
+        $current_dir = $base_dir;
     }
 }
 
-$is_root = ($current_dir === $base_dir_real);
+$is_root = ($current_dir === $base_dir || $current_dir === realpath($base_dir));
 
 $entries = [];
 if ($handle = opendir($current_dir)) {
     while (false !== ($entry = readdir($handle))) {
         if ($entry != "." && $entry != ".." && $entry != "account.json") {
             $full_path = $current_dir . '/' . $entry;
-            $relative_path = substr($full_path, strlen($base_dir_real) + 1);
+            $relative_path = substr($full_path, strlen(realpath($base_dir)) + 1);
             $is_dir = is_dir($full_path);
             $size = $is_dir ? 0 : filesize($full_path);
             $mtime = filemtime($full_path);
@@ -60,7 +61,7 @@ $account_info = null;
 if (!$is_root) {
     $account_info = load_session_account($current_dir);
     foreach ($entries as $e) {
-        if (!$e['is_dir'] && $e['size'] > 0) {
+        if (!$e['is_dir'] && $e['size'] >= MIN_CLIP_SIZE) {
             $clip_count++;
             $clip_entries[] = $e;
         }
@@ -102,6 +103,8 @@ if (!$is_root) {
     .progress-bar .fill { height: 100%; background: #58a6ff; transition: width 0.3s; width: 0%; }
     .status-msg { color: #8b949e; font-size: 0.85rem; margin: 8px 0; display: none; }
     .clip-count { display: inline-block; background: #30363d; color: #8b949e; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; margin-left: 6px; }
+    .dl-icon { color: #8b949e; margin-left: 8px; font-size: 0.8rem; cursor: pointer; }
+    .dl-icon:hover { color: #58a6ff; }
 </style>
 </head>
 <body>
@@ -141,13 +144,14 @@ if (!$is_root) {
 <tr>
     <th>Name</th>
     <th>Date</th>
-    <?php if (!$is_root): ?><th>Size</th><?php endif; ?>
+    <?php if (!$is_root): ?><th>Size</th><th></th><?php endif; ?>
 </tr>
 </thead>
 <tbody>
 <?php foreach ($entries as $e): ?>
     <?php
-    if (!$e['is_dir'] && $e['size'] <= 0) continue;
+    // Skip empty / header-only clips (< 1 KB)
+    if (!$e['is_dir'] && $e['size'] < MIN_CLIP_SIZE) continue;
 
     $display_date = $e['ts'] ? date('M j, Y g:i A', $e['ts']) : '';
 
@@ -156,14 +160,14 @@ if (!$is_root) {
         $date_label = $decoded ? date('M j, Y', $decoded) : '';
         $display_name = $e['name'];
         if ($date_label) $display_name .= ' (' . $date_label . ')';
-        $sess_account = load_session_account($base_dir_real . '/' . $e['name']);
+        $sess_account = load_session_account(realpath($base_dir) . '/' . $e['name']);
         $account_label = $sess_account ? ' — ' . htmlspecialchars($sess_account['email'] ?? '') : '';
-        // Count clips in this session
+        // Count real clips in this session (>= MIN_CLIP_SIZE)
         $sess_clips = 0;
-        $sess_path = $base_dir_real . '/' . $e['name'];
+        $sess_path = realpath($base_dir) . '/' . $e['name'];
         if ($dh = @opendir($sess_path)) {
             while (($f = readdir($dh)) !== false) {
-                if ($f !== '.' && $f !== '..' && $f !== 'account.json' && is_file($sess_path.'/'.$f) && filesize($sess_path.'/'.$f) > 0) $sess_clips++;
+                if ($f !== '.' && $f !== '..' && $f !== 'account.json' && is_file($sess_path.'/'.$f) && filesize($sess_path.'/'.$f) >= MIN_CLIP_SIZE) $sess_clips++;
             }
             closedir($dh);
         }
@@ -194,6 +198,7 @@ if (!$is_root) {
         <td><span class="icon">🎬</span><a href="<?php echo $file_url; ?>" target="_blank"><?php echo htmlspecialchars($display_filename); ?></a></td>
         <td class="date"><?php echo $display_date; ?></td>
         <td class="size"><?php echo $size_display; ?></td>
+        <td><a href="<?php echo $file_url; ?>" download="<?php echo htmlspecialchars($display_filename); ?>" class="dl-icon" title="Download clip">⬇</a></td>
     </tr>
     <?php } ?>
 <?php endforeach; ?>
@@ -238,10 +243,14 @@ async function combineVideos() {
         for (let i = 0; i < clipUrls.length; i++) {
             setProgress(Math.round((i / clipUrls.length) * 60));
             showStatus(`Downloading clip ${i + 1} of ${clipUrls.length}...`);
-            const resp = await fetch(clipUrls[i]);
-            if (!resp.ok) { console.warn(`Skip clip ${i+1}: HTTP ${resp.status}`); continue; }
-            const buf = await resp.arrayBuffer();
-            if (buf.byteLength > 0) buffers.push(buf);
+            try {
+                const resp = await fetch(clipUrls[i]);
+                if (!resp.ok) { console.warn(`Skip clip ${i+1}: HTTP ${resp.status}`); continue; }
+                const buf = await resp.arrayBuffer();
+                if (buf.byteLength >= 1000) buffers.push(buf);
+            } catch (fetchErr) {
+                console.warn(`Skip clip ${i+1}: fetch error`, fetchErr);
+            }
         }
 
         if (buffers.length === 0) { showStatus('❌ No valid clips to combine.'); return; }
@@ -249,12 +258,9 @@ async function combineVideos() {
         setProgress(65);
         showStatus(`Combining ${buffers.length} clips...`);
 
-        // Step 2: Use MediaSource API to play clips sequentially and re-record
-        // First, detect the codec from the first clip
-        const firstBlob = new Blob([buffers[0]], { type: 'video/webm' });
-        const testVideo = document.createElement('video');
-        testVideo.muted = true;
-        testVideo.playsInline = true;
+        // Step 2: Find the best clip for metadata (largest file = most likely to work)
+        const sortedBySize = [...buffers].sort((a, b) => b.byteLength - a.byteLength);
+        const metaBlob = new Blob([sortedBySize[0]], { type: 'video/webm' });
 
         // Try to determine a working mimeType for MediaRecorder
         const mimeTypes = [
@@ -273,16 +279,19 @@ async function combineVideos() {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        // Load first clip to get dimensions
-        testVideo.src = URL.createObjectURL(firstBlob);
+        // Load best clip to get dimensions
+        const metaVideo = document.createElement('video');
+        metaVideo.muted = true;
+        metaVideo.playsInline = true;
+        metaVideo.src = URL.createObjectURL(metaBlob);
         await new Promise((resolve, reject) => {
-            testVideo.onloadedmetadata = resolve;
-            testVideo.onerror = () => reject(new Error('Cannot read video metadata'));
+            metaVideo.onloadedmetadata = resolve;
+            metaVideo.onerror = () => reject(new Error('Cannot read video metadata from any clip'));
             setTimeout(() => reject(new Error('Metadata timeout')), 10000);
         });
-        canvas.width = testVideo.videoWidth || 640;
-        canvas.height = testVideo.videoHeight || 480;
-        URL.revokeObjectURL(testVideo.src);
+        canvas.width = metaVideo.videoWidth || 640;
+        canvas.height = metaVideo.videoHeight || 480;
+        URL.revokeObjectURL(metaVideo.src);
 
         // Set up MediaRecorder on canvas stream
         const canvasStream = canvas.captureStream(30);
@@ -294,7 +303,8 @@ async function combineVideos() {
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.start(500);
 
-        // Play each clip sequentially
+        // Play each clip sequentially (in chronological order)
+        let clipsEncoded = 0;
         for (let i = 0; i < buffers.length; i++) {
             setProgress(65 + Math.round((i / buffers.length) * 30));
             showStatus(`Encoding clip ${i + 1} of ${buffers.length}...`);
@@ -307,11 +317,18 @@ async function combineVideos() {
             vid.src = url;
 
             try {
-                await new Promise((resolve, reject) => {
-                    vid.onloadeddata = resolve;
-                    vid.onerror = () => resolve(); // skip unplayable clips
-                    setTimeout(resolve, 5000);
+                // Wait for video to be ready
+                const loaded = await new Promise((resolve) => {
+                    vid.onloadeddata = () => resolve(true);
+                    vid.onerror = () => resolve(false);
+                    setTimeout(() => resolve(false), 5000);
                 });
+
+                if (!loaded) {
+                    console.warn(`Clip ${i+1} could not be loaded, skipping`);
+                    URL.revokeObjectURL(url);
+                    continue;
+                }
 
                 await vid.play().catch(() => {});
 
@@ -330,12 +347,19 @@ async function combineVideos() {
                     setTimeout(resolve, 30000); // safety timeout per clip
                     drawFrame();
                 });
+                clipsEncoded++;
             } catch (e) {
                 console.warn(`Clip ${i+1} skipped:`, e);
             }
 
             vid.src = '';
             URL.revokeObjectURL(url);
+        }
+
+        if (clipsEncoded === 0) {
+            recorder.stop();
+            showStatus('❌ No clips could be encoded. Try "Download All (ZIP)" instead.');
+            return;
         }
 
         // Stop recording and download
@@ -356,7 +380,7 @@ async function combineVideos() {
         setTimeout(() => URL.revokeObjectURL(dlUrl), 1000);
 
         const sizeMB = (combined.size / 1024 / 1024).toFixed(1);
-        showStatus(`✅ Combined video downloaded! (${sizeMB} MB, ${buffers.length} clips)`);
+        showStatus(`✅ Combined video downloaded! (${sizeMB} MB, ${clipsEncoded} clips)`);
 
     } catch (err) {
         showStatus('❌ Error: ' + err.message + '. Try "Download All (ZIP)" instead.');
